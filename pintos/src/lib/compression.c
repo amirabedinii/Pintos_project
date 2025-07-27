@@ -18,12 +18,12 @@ void* compress_data(const void* data, size_t size, size_t* compressed_size) {
         return NULL;
     }
     
-    int output_pos = 0;
-    int input_pos = 0;
+    size_t output_pos = 0;
+    size_t input_pos = 0;
     
     while (input_pos < size) {
         uint8_t current_byte = input[input_pos];
-        int run_length = 1;
+        size_t run_length = 1;
         
         /* Count consecutive identical bytes */
         while (run_length < MAX_RUN_LENGTH && 
@@ -34,15 +34,15 @@ void* compress_data(const void* data, size_t size, size_t* compressed_size) {
         
         if (run_length >= 3) {
             /* Write run-length encoded data */
-            if (output_pos + 2 <= size * 2) {
+            if (output_pos + 2 < size * 2) {
                 output[output_pos++] = 0; /* Special marker for RLE */
-                output[output_pos++] = run_length;
+                output[output_pos++] = (uint8_t)run_length;
                 output[output_pos++] = current_byte;
             }
             input_pos += run_length;
         } else {
             /* Write literal data */
-            if (output_pos + 1 <= size * 2) {
+            if (output_pos < size * 2) {
                 output[output_pos++] = current_byte;
             }
             input_pos++;
@@ -72,8 +72,8 @@ void* decompress_data(const void* compressed_data, size_t compressed_size, size_
         return NULL;
     }
     
-    int output_pos = 0;
-    int input_pos = 0;
+    size_t output_pos = 0;
+    size_t input_pos = 0;
     
     while (input_pos < compressed_size && output_pos < original_size) {
         uint8_t current_byte = input[input_pos++];
@@ -84,7 +84,7 @@ void* decompress_data(const void* compressed_data, size_t compressed_size, size_
             uint8_t repeated_byte = input[input_pos++];
             
             /* Expand the run */
-            for (int i = 0; i < run_length && output_pos < original_size; i++) {
+            for (size_t i = 0; i < run_length && output_pos < original_size; i++) {
                 output[output_pos++] = repeated_byte;
             }
         } else {

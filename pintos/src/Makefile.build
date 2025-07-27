@@ -96,6 +96,23 @@ loader.bin: threads/loader.o
 os.dsk: kernel.bin
 	cat $^ > $@
 
+# Compression test targets
+compression-test: tests/compression-test
+	@echo "Running compression tests..."
+	@./tests/compression-test
+
+tests/compression-test: tests/compression-test.c lib/compression.c
+	@echo "Building compression test..."
+	@$(CC) $(CFLAGS) $(CPPFLAGS) -O2 -o $@ $^ -lm
+
+test-compression: compression-test
+	@echo "✅ Compression tests completed"
+
+# Quick test target for development
+quick-test: tests/compression-test
+	@echo "Running quick compression test..."
+	@timeout 10s ./tests/compression-test || echo "Test timed out or failed"
+
 clean::
 	rm -f $(OBJECTS) $(DEPENDS)
 	rm -f threads/loader.o threads/kernel.lds.s threads/loader.d
@@ -104,6 +121,7 @@ clean::
 	rm -f kernel.bin loader.bin
 	rm -f bochsout.txt bochsrc.txt
 	rm -f results grade
+	rm -f tests/compression-test
 
 Makefile: $(SRCDIR)/Makefile.build
 	cp $< $@
