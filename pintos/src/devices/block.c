@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include "devices/ide.h"
 #include "threads/malloc.h"
+#include "lib/compression.h"
 
 /* A block device. */
 struct block
@@ -121,8 +122,38 @@ void
 block_read (struct block *block, block_sector_t sector, void *buffer)
 {
   check_sector (block, sector);
-  block->ops->read (block->aux, sector, buffer);
+  
+  /* Allocate temporary buffer for reading from disk */
+  uint8_t* block_buffer = malloc(BLOCK_SECTOR_SIZE);
+  if (!block_buffer) {
+    PANIC("Failed to allocate memory for block read");
+  }
+
+  /* Read raw data from disk */
+  block->ops->read (block->aux, sector, block_buffer);
   block->read_cnt++;
+
+  /* Extract compressed size from first 4 bytes */
+  size_t compressed_size = ((size_t)block_buffer[0] << 24) |
+                           ((size_t)block_buffer[1] << 16) |
+                           ((size_t)block_buffer[2] << 8) |
+                           (size_t)block_buffer[3];
+
+  if (compressed_size == 0) {
+    /* Uncompressed block - copy data directly */
+    memcpy(buffer, block_buffer, BLOCK_SECTOR_SIZE);
+  } else {
+    /* Compressed block - decompress data */
+    void* decompressed_data = decompress_data(block_buffer + 4, compressed_size, BLOCK_SECTOR_SIZE);
+    if (!decompressed_data) {
+      free(block_buffer);
+      PANIC("Failed to decompress block data");
+    }
+    memcpy(buffer, decompressed_data, BLOCK_SECTOR_SIZE);
+    free(decompressed_data);
+  }
+
+  free(block_buffer);
 }
 
 /* Write sector SECTOR to BLOCK from BUFFER, which must contain
@@ -135,8 +166,54 @@ block_write (struct block *block, block_sector_t sector, const void *buffer)
 {
   check_sector (block, sector);
   ASSERT (block->type != BLOCK_FOREIGN);
-  block->ops->write (block->aux, sector, buffer);
+  
+  /* Try to compress the data */
+  size_t compressed_size;
+  void* compressed_data = compress_data(buffer, BLOCK_SECTOR_SIZE, &compressed_size);
+
+  /* Check if compression is beneficial */
+  if (!compressed_data || compressed_size > BLOCK_SECTOR_SIZE - 4) {
+    /* Compression failed or size too large - store uncompressed */
+    if (compressed_data) {
+      free(compressed_data);
+    }
+    compressed_size = 0; /* Indicate uncompressed */
+    compressed_data = (void*)buffer;
+  }
+
+  /* Allocate buffer for writing to disk */
+  uint8_t* block_buffer = malloc(BLOCK_SECTOR_SIZE);
+  if (!block_buffer) {
+    if (compressed_size != 0) {
+      free(compressed_data);
+    }
+    PANIC("Failed to allocate memory for block write");
+  }
+
+  /* Store metadata: compressed size (4 bytes, little-endian) */
+  block_buffer[0] = (uint8_t)(compressed_size & 0xFF);
+  block_buffer[1] = (uint8_t)((compressed_size >> 8) & 0xFF);
+  block_buffer[2] = (uint8_t)((compressed_size >> 16) & 0xFF);
+  block_buffer[3] = (uint8_t)((compressed_size >> 24) & 0xFF);
+
+  /* Copy compressed data or uncompressed data */
+  if (compressed_size == 0) {
+    /* Uncompressed - copy all data */
+    memcpy(block_buffer + 4, compressed_data, BLOCK_SECTOR_SIZE);
+  } else {
+    /* Compressed - copy compressed data */
+    memcpy(block_buffer + 4, compressed_data, compressed_size);
+  }
+
+  /* Write to disk */
+  block->ops->write (block->aux, sector, block_buffer);
   block->write_cnt++;
+
+  /* Clean up */
+  if (compressed_size != 0) {
+    free(compressed_data);
+  }
+  free(block_buffer);
 }
 
 /* Returns the number of sectors in BLOCK. */
